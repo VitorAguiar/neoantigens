@@ -1,0 +1,163 @@
+---
+title: "Alelos HLA em câncer de bexiga"
+output: github_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+	echo = TRUE,
+	message = FALSE,
+	warning = FALSE,
+	comment = ""
+)
+```
+
+```{r}
+library(tidyverse)
+library(rvest)
+```
+
+
+## Alelos dos pacientes
+
+```{r}
+hlatypes <- read.table("./hlatypes.txt", header = TRUE) %>%
+    as_tibble() %>%
+    pivot_longer(-1, names_to = "locus", values_to = "allele") %>%
+    mutate(locus = sub("^(HLA)\\.([ABC])_\\d$", "\\1-\\2", locus),
+           allele = toupper(allele),
+           allele = sub("^HLA_([^_]+)_(\\d+)_(\\d+)$", "\\1*\\2:\\3", allele),
+           allele = recode(allele, "A*07:07" = "A*02:07")) #fix typo
+
+hlatypes
+```
+
+
+## Busca dos alelos nos bancos do NetMHC e NetMHCpan
+
+Vamos comparar os alelos dos pacientes com aqueles presentes nos bancos do NetMHC e NetMHCpan:
+
+```{r}
+netmhc <- 
+    "https://services.healthtech.dtu.dk/services/NetMHC-4.0/MHC_allele_names.txt" %>%
+    read_tsv(col_names = FALSE) %>%
+    setNames(c("id", "allele", "locus")) %>%
+    select(locus, allele) %>%
+    mutate(allele = sub("^HLA-", "", allele))
+
+netmhcpan <- 
+    "https://services.healthtech.dtu.dk/services/NetMHCpan-4.1/MHC_allele_names.txt" %>%
+    read_tsv(col_names = FALSE) %>%
+    setNames("allele") %>%
+    mutate(allele = sub("^HLA-([A-Z]+)(.+)$", "\\1*\\2", allele))
+   
+hlatypes %>%
+    drop_na() %>%
+    mutate(in_netmhc = allele %in% netmhc$allele,
+           in_netmhcpan = allele %in% netmhcpan$allele) %>%
+    summarise_at(vars(4:5), ~round(mean(.) *  100, 2))
+```
+
+Vemos que 64% dos alelos são encontrados no NetMHC, mas todos os alelos são encontrados no NetMHCpan v4.1.
+
+
+## Busca no allelefrequencies.net para obter a frequência alélica
+
+Vamos buscar esses alelos no Allelefrequencies.net para ver sua frequência na população chinesa.
+
+Para isso criei a função abaixo:
+
+```{r}
+get_frequency <- function(allele) {
+    
+    hlaurl <- "http://www.allelefrequencies.net/hla6006a.asp?hla_selection=%s&hla_country=China"
+
+    hlahtml <- hlaurl %>%
+	sprintf(sub("HLA-", "", allele)) %>%
+	read_html()
+
+    nodes <- html_nodes(hlahtml, "table")
+
+    if (length(nodes) == 4 & grepl("Sorry, we did not find any results", nodes[[4]]))
+	return(NA)
+
+    nodes[[5]] %>%
+	html_table(fill = TRUE, header = TRUE) %>%
+	select(2, 4, 6, 8) %>%
+	as_tibble() %>%
+	setNames(c("allele_db", "population", "f", "sample_size")) %>%
+	mutate(sample_size = as.integer(sub(",", "", sample_size)))
+}
+```
+
+Ela tem o seguinte output quando aplicada a um alelo:
+
+```{r}
+get_frequency("A*01:01")
+```
+
+Vamos aplicar a todos os alelos dos pacientes. Como são várias amostragens na China, vou tirar uma média ponderada da frequência alélica dados os tamanhos amostrais.
+
+*Obs: Aplicar a todos os alelos pode levar alguns minutos, mas pode ser paralelizado.*
+
+```{r}
+allele_freqs <- hlatypes %>% 
+    drop_na() %>%
+    distinct(locus, allele) %>%
+    mutate(data = map(allele, get_frequency)) %>%
+    unnest(data) %>%
+    group_by(locus, allele) %>%
+    summarise(wf = weighted.mean(f, sample_size)) %>%
+    ungroup()
+
+allele_freqs
+```
+
+Verificamos quais alelos não estão no banco do allelefrequencies.net:
+
+```{r}
+allele_freqs %>% 
+    filter(is.na(wf))
+```
+
+Para esse alelo, ainda podemos buscar no banco de alelos raros.
+
+Para isso, vou precisar criar uma função similar à anterior:
+
+```{r}
+get_rare <- function(allele) {
+
+    hlaurl <- "http://www.allelefrequencies.net/hla6002a.asp?all_name=%s"
+
+    hlahtml <- hlaurl %>%
+	sprintf(sub("HLA-", "", allele)) %>%
+	read_html()
+
+    nodes <- html_nodes(hlahtml, "table")
+
+    nodes[[4]] %>%
+	html_table(fill = TRUE, header = TRUE) %>%
+	select(2, 4, 6) %>%
+	as_tibble() %>%
+	setNames(c("population", "f", "sample_size"))
+}
+```
+
+Aplico essa função aos alelos:
+
+```{r}
+get_rare("A*02:133") %>%
+    filter(f > 0)
+```
+
+Vemos que o `A*02:133` não foi descrito na China (nesse banco de dados), apenas possui uma frequência muita baixa numa outra população.
+
+No entanto, para os outros alelos, podemos plotar a frequência:
+
+```{r, fig.height=8}
+ggplot(allele_freqs, aes(reorder(allele, wf), wf)) +
+    geom_col() +
+    facet_wrap(~locus, scales = "free", ncol = 1) +
+    theme(axis.text.x = element_text(angle = 90)) +
+    labs(x = NULL, y = "Allele frequency in China")
+```
