@@ -167,13 +167,11 @@ Verificamos quais alelos não estão no banco do allelefrequencies.net:
 
 ``` r
 allele_freqs %>% 
-    filter(is.na(wf))
+    filter(is.na(wf)) %>%
+    pull(allele)
 ```
 
-    # A tibble: 1 x 3
-      locus allele      wf
-      <chr> <chr>    <dbl>
-    1 HLA-A A*02:133    NA
+    [1] "A*02:133"
 
 Para esse alelo, ainda podemos buscar no banco de alelos raros.
 
@@ -202,13 +200,13 @@ Aplico essa função aos alelos:
 
 ``` r
 get_rare("A*02:133") %>%
-    filter(f > 0)
+    filter(f > 0) %>%
+    knitr::kable()
 ```
 
-    # A tibble: 1 x 3
-      population                             f sample_size
-      <chr>                              <dbl>       <int>
-    1 Germany DKMS - Austria minority 0.000300        1698
+| population                      |     f | sample\_size |
+| :------------------------------ | ----: | -----------: |
+| Germany DKMS - Austria minority | 3e-04 |         1698 |
 
 Vemos que o `A*02:133` não foi descrito na China (nesse banco de dados),
 apenas possui uma frequência muita baixa numa outra população.
