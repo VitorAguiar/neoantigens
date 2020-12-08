@@ -56,17 +56,22 @@ netmhcpan <-
    
 hlatypes %>%
     drop_na() %>%
-    mutate(in_netmhc = allele %in% netmhc$allele,
-           in_netmhcpan = allele %in% netmhcpan$allele) %>%
-    summarise_at(vars(4:5), ~round(mean(.) *  100, 2))
+    mutate(NetMHC = allele %in% netmhc$allele,
+           NetMHCpan = allele %in% netmhcpan$allele) %>%
+    summarise_at(vars(4:5), mean) %>%
+    pivot_longer(1:2, names_to = "database", values_to = "percent") %>%
+    mutate(percent = scales::percent(percent))
 ```
 
-    # A tibble: 1 x 2
-      in_netmhc in_netmhcpan
-          <dbl>        <dbl>
-    1      64.8          100
+``` 
+# A tibble: 2 x 2
+  database  percent
+  <chr>     <chr>  
+1 NetMHC    65%    
+2 NetMHCpan 100%   
+```
 
-Vemos que 64% dos alelos são encontrados no NetMHC, mas todos os alelos
+Vemos que 65% dos alelos são encontrados no NetMHC, mas todos os alelos
 são encontrados no NetMHCpan v4.1.
 
 ## Busca no allelefrequencies.net para obter a frequência alélica
@@ -201,12 +206,12 @@ Aplico essa função aos alelos:
 ``` r
 get_rare("A*02:133") %>%
     filter(f > 0) %>%
-    knitr::kable()
+    knitr::kable(format.args = list(scientific = FALSE))
 ```
 
-| population                      |     f | sample\_size |
-| :------------------------------ | ----: | -----------: |
-| Germany DKMS - Austria minority | 3e-04 |         1698 |
+| population                      |      f | sample\_size |
+| :------------------------------ | -----: | -----------: |
+| Germany DKMS - Austria minority | 0.0003 |         1698 |
 
 Vemos que o `A*02:133` não foi descrito na China (nesse banco de dados),
 apenas possui uma frequência muita baixa numa outra população.
@@ -214,7 +219,7 @@ apenas possui uma frequência muita baixa numa outra população.
 No entanto, para os outros alelos, podemos plotar a frequência:
 
 ``` r
-ggplot(allele_freqs, aes(reorder(allele, wf), wf)) +
+ggplot(allele_freqs, aes(x = reorder(allele, wf), y = wf)) +
     geom_col() +
     facet_wrap(~locus, scales = "free", ncol = 1) +
     theme(axis.text.x = element_text(angle = 90)) +
