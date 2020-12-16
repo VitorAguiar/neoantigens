@@ -9,6 +9,9 @@ library(rvest)
 ## Alelos dos pacientes
 
 ``` r
+# ler com read.table ao invés de read_tsv
+# porque o arquivo tem inconsistências com o separador nas últimas linhas
+# espaços em número variável ao invés de tabs
 hlatypes <- read.table("./hlatypes.txt", header = TRUE) %>%
     as_tibble() %>%
     pivot_longer(-1, names_to = "locus", values_to = "allele") %>%
@@ -60,16 +63,14 @@ hlatypes %>%
            NetMHCpan = allele %in% netmhcpan$allele) %>%
     summarise_at(vars(4:5), mean) %>%
     pivot_longer(1:2, names_to = "database", values_to = "percent") %>%
-    mutate(percent = scales::percent(percent))
+    mutate(percent = scales::percent(percent)) %>%
+    knitr::kable()
 ```
 
-``` 
-# A tibble: 2 x 2
-  database  percent
-  <chr>     <chr>  
-1 NetMHC    65%    
-2 NetMHCpan 100%   
-```
+| database  | percent |
+| :-------- | :------ |
+| NetMHC    | 65%     |
+| NetMHCpan | 100%    |
 
 Vemos que 65% dos alelos são encontrados no NetMHC, mas todos os alelos
 são encontrados no NetMHCpan v4.1.
@@ -84,23 +85,24 @@ Para isso criei a função abaixo:
 ``` r
 get_frequency <- function(allele) {
     
-    hlaurl <- "http://www.allelefrequencies.net/hla6006a.asp?hla_selection=%s&hla_country=China"
+    hlaurl <- 
+        "http://www.allelefrequencies.net/hla6006a.asp?hla_selection=%s&hla_country=China"
 
     hlahtml <- hlaurl %>%
-    sprintf(sub("HLA-", "", allele)) %>%
-    read_html()
+        sprintf(sub("HLA-", "", allele)) %>%
+        read_html()
 
     nodes <- html_nodes(hlahtml, "table")
 
-    if (length(nodes) == 4 & grepl("Sorry, we did not find any results", nodes[[4]]))
+    if (grepl("Sorry, we did not find any results", nodes[[4]]))
     return(NA)
 
     nodes[[5]] %>%
-    html_table(fill = TRUE, header = TRUE) %>%
-    select(2, 4, 6, 8) %>%
-    as_tibble() %>%
-    setNames(c("allele_db", "population", "f", "sample_size")) %>%
-    mutate(sample_size = as.integer(sub(",", "", sample_size)))
+        html_table(fill = TRUE, header = TRUE) %>%
+        select(2, 4, 6, 8) %>%
+        as_tibble() %>%
+        setNames(c("allele_db", "population", "f", "sample_size")) %>%
+        mutate(sample_size = as.integer(sub(",", "", sample_size)))
 }
 ```
 
@@ -137,14 +139,18 @@ Vamos aplicar a todos os alelos dos pacientes. Como são várias
 amostragens na China, vou tirar uma média ponderada da frequência
 alélica dados os tamanhos amostrais.
 
-*Obs: Aplicar a todos os alelos pode levar alguns minutos, mas pode ser
-paralelizado.*
+Aplicar a todos os alelos pode levar alguns minutos, então vou
+paralelizar com `furrr`.
 
 ``` r
+library(furrr)
+
+plan(multisession, workers = 8)
+
 allele_freqs <- hlatypes %>% 
     drop_na() %>%
     distinct(locus, allele) %>%
-    mutate(data = map(allele, get_frequency)) %>%
+    mutate(data = future_map(allele, get_frequency)) %>%
     unnest(data) %>%
     group_by(locus, allele) %>%
     summarise(wf = weighted.mean(f, sample_size)) %>%
