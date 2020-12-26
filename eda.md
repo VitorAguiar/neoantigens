@@ -225,10 +225,14 @@ apenas possui uma frequência muita baixa numa outra população.
 No entanto, para os outros alelos, podemos plotar a frequência:
 
 ``` r
-ggplot(allele_freqs, aes(x = wf, y = reorder(allele, wf))) +
-    geom_col() +
+allele_freqs %>%
+    drop_na() %>%
+    ggplot(aes(x = wf, y = reorder(allele, wf), fill = wf)) +
+    geom_col(show.legend = FALSE) +
+    scale_fill_viridis_c(option = "viridis") +
     facet_wrap(~locus, scales = "free", nrow = 1) +
-    labs(x = "Allele frequency in China", y = NULL)
+    labs(x = "Allele frequency in China", y = NULL) +
+    theme_bw()
 ```
 
 ![](eda_files/figure-gfm/unnamed-chunk-10-1.png)<!-- -->
