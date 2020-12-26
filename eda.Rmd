@@ -170,11 +170,16 @@ No entanto, para os outros alelos, podemos plotar a frequência:
 
 ```{r, fig.width=8, fig.height=6}
 allele_freqs %>%
-    drop_na() %>%
-    ggplot(aes(x = wf, y = reorder(allele, wf), fill = wf)) +
-    geom_col(show.legend = FALSE) +
-    scale_fill_viridis_c(option = "viridis") +
+    mutate(allele = fct_reorder(allele, -wf)) %>%
+    ggplot(aes(x = wf, y = allele, fill = wf)) +
+    geom_col() +
+    scale_y_discrete(limits = rev) +
     facet_wrap(~locus, scales = "free", nrow = 1) +
-    labs(x = "Allele frequency in China", y = NULL) +
-    theme_bw()
+    scale_fill_continuous(type = "viridis",
+                          guide = guide_colourbar(direction = "horizontal",
+                                                  barwidth = 10,
+                                                   barheight = .5)) +
+    labs(x = "Allele frequency in China", y = NULL, fill = NULL) +
+    theme_bw() +
+    theme(legend.position = "bottom")
 ```
