@@ -92,17 +92,16 @@ get_frequency <- function(allele) {
         sprintf(sub("HLA-", "", allele)) %>%
         read_html()
 
-    nodes <- html_nodes(hlahtml, "table")
-
-    if (grepl("Sorry, we did not find any results", nodes[[4]]))
-    return(NA)
-
-    nodes[[5]] %>%
+    hlatbl <- html_node(hlahtml, "table.tblNormal")
+    
+    if (class(hlatbl) == "xml_missing") return(tibble(allele = allele, f = NA))
+    
+    hlatbl %>%
         html_table(fill = TRUE, header = TRUE) %>%
         select(2, 4, 6, 8) %>%
         as_tibble() %>%
-        setNames(c("allele_db", "population", "f", "sample_size")) %>%
-        mutate(sample_size = as.integer(sub(",", "", sample_size)))
+        setNames(c("allele", "population", "f", "n")) %>%
+        mutate(n = as.integer(sub(",", "", n)))
 }
 ```
 
@@ -113,31 +112,31 @@ get_frequency("A*01:01")
 ```
 
     # A tibble: 19 x 4
-       allele_db population                                   f sample_size
-       <chr>     <chr>                                    <dbl>       <int>
-     1 A*01:01   China Beijing                           0.037           67
-     2 A*01:01   China Beijing Shijiazhuang Tianjian Han 0.034          618
-     3 A*01:01   China Canton Han                        0.006          264
-     4 A*01:01   China Guangzhou                         0.01           102
-     5 A*01:01   China Guizhou Province Bouyei           0.005          109
-     6 A*01:01   China Guizhou Province Miao pop 2       0               85
-     7 A*01:01   China Guizhou Province Shui             0              153
-     8 A*01:01   China Hubei Han                         0.0229        3732
-     9 A*01:01   China Inner Mongolia Region             0.054          102
-    10 A*01:01   China Jiangsu Han                       0.037         3238
-    11 A*01:01   China Jiangsu Province Han              0.0174         334
-    12 A*01:01   China North Han                         0              105
-    13 A*01:01   China Qinghai Province Hui              0.055          110
-    14 A*01:01   China Shanxi HIV negative               0.091           22
-    15 A*01:01   China Sichuan HIV negative              0.059           34
-    16 A*01:01   China South Han                         0.005          284
-    17 A*01:01   China Uyghur HIV negative               0.026           19
-    18 A*01:01   China Yunnan Province Han               0.015          101
-    19 A*01:01   Germany DKMS - China minority           0.038         1282
+       allele  population                                   f     n
+       <chr>   <chr>                                    <dbl> <int>
+     1 A*01:01 China Beijing                           0.037     67
+     2 A*01:01 China Beijing Shijiazhuang Tianjian Han 0.034    618
+     3 A*01:01 China Canton Han                        0.006    264
+     4 A*01:01 China Guangzhou                         0.01     102
+     5 A*01:01 China Guizhou Province Bouyei           0.005    109
+     6 A*01:01 China Guizhou Province Miao pop 2       0         85
+     7 A*01:01 China Guizhou Province Shui             0        153
+     8 A*01:01 China Hubei Han                         0.0229  3732
+     9 A*01:01 China Inner Mongolia Region             0.054    102
+    10 A*01:01 China Jiangsu Han                       0.037   3238
+    11 A*01:01 China Jiangsu Province Han              0.0174   334
+    12 A*01:01 China North Han                         0        105
+    13 A*01:01 China Qinghai Province Hui              0.055    110
+    14 A*01:01 China Shanxi HIV negative               0.091     22
+    15 A*01:01 China Sichuan HIV negative              0.059     34
+    16 A*01:01 China South Han                         0.005    284
+    17 A*01:01 China Uyghur HIV negative               0.026     19
+    18 A*01:01 China Yunnan Province Han               0.015    101
+    19 A*01:01 Germany DKMS - China minority           0.038   1282
 
 Vamos aplicar a todos os alelos dos pacientes. Como são várias
 amostragens na China, vou tirar uma média ponderada da frequência
-alélica dados os tamanhos amostrais.
+alélica dados os tamanhos amostrais, para cada alelo.
 
 Aplicar a todos os alelos pode levar alguns minutos, então vou
 paralelizar com `furrr`.
@@ -147,15 +146,21 @@ library(furrr)
 
 plan(multisession, workers = 8)
 
-allele_freqs <- hlatypes %>% 
-    drop_na() %>%
+unique_df <- hlatypes %>% 
+    drop_na(allele) %>%
     distinct(locus, allele) %>%
-    mutate(data = future_map(allele, get_frequency)) %>%
-    unnest(data) %>%
+    arrange(locus, allele)
+
+allele_freqs <- future_map_dfr(unique_df$allele, get_frequency) %>%
+    left_join(unique_df, .) %>%
     group_by(locus, allele) %>%
-    summarise(wf = weighted.mean(f, sample_size)) %>%
+    summarise(wf = weighted.mean(f, n)) %>%
     ungroup()
 
+#saveRDS(allele_freqs, "allele_freqs.rds")
+```
+
+``` r
 allele_freqs
 ```
 
@@ -194,16 +199,15 @@ get_rare <- function(allele) {
     hlaurl <- "http://www.allelefrequencies.net/hla6002a.asp?all_name=%s"
 
     hlahtml <- hlaurl %>%
-    sprintf(sub("HLA-", "", allele)) %>%
-    read_html()
+        sprintf(sub("HLA-", "", allele)) %>%
+        read_html()
 
-    nodes <- html_nodes(hlahtml, "table")
-
-    nodes[[4]] %>%
-    html_table(fill = TRUE, header = TRUE) %>%
-    select(2, 4, 6) %>%
-    as_tibble() %>%
-    setNames(c("population", "f", "sample_size"))
+    html_node(hlahtml, "table.tblNormal") %>%
+        html_table(fill = TRUE, header = TRUE) %>%
+        select(2, 4, 6) %>%
+        as_tibble() %>%
+        setNames(c("population", "f", "n")) %>%
+        filter(f > 0)
 }
 ```
 
@@ -211,13 +215,12 @@ Aplico essa função aos alelos:
 
 ``` r
 get_rare("A*02:133") %>%
-    filter(f > 0) %>%
     knitr::kable(format.args = list(scientific = FALSE))
 ```
 
-| population                      |      f | sample\_size |
-| :------------------------------ | -----: | -----------: |
-| Germany DKMS - Austria minority | 0.0003 |         1698 |
+| population                      |      f |    n |
+| :------------------------------ | -----: | ---: |
+| Germany DKMS - Austria minority | 0.0003 | 1698 |
 
 Vemos que o `A*02:133` não foi descrito na China (nesse banco de dados),
 apenas possui uma frequência muita baixa numa outra população.
@@ -225,19 +228,23 @@ apenas possui uma frequência muita baixa numa outra população.
 No entanto, para os outros alelos, podemos plotar a frequência:
 
 ``` r
+library(ggthemes)
+
 allele_freqs %>%
     mutate(allele = fct_reorder(allele, -wf)) %>%
     ggplot(aes(x = wf, y = allele, fill = wf)) +
-    geom_col() +
+    geom_col(color = "grey50", size = .25) +
     scale_y_discrete(limits = rev) +
     facet_wrap(~locus, scales = "free", nrow = 1) +
-    scale_fill_continuous(type = "viridis",
-                          guide = guide_colourbar(direction = "horizontal",
-                                                  barwidth = 10,
-                                                   barheight = .5)) +
+    scale_fill_continuous_tableau(guide = guide_colourbar(direction = "horizontal",
+                                                          barwidth = 10,
+                                                          barheight = .5)) +
     labs(x = "Allele frequency in China", y = NULL, fill = NULL) +
     theme_bw() +
-    theme(legend.position = "bottom")
+    theme(legend.position = "bottom",
+          panel.grid.major.y = element_blank(),
+          panel.grid.minor.y = element_blank(),
+          panel.grid.minor.x = element_blank())
 ```
 
-![](eda_files/figure-gfm/unnamed-chunk-10-1.png)<!-- -->
+![](eda_files/figure-gfm/unnamed-chunk-12-1.png)<!-- -->

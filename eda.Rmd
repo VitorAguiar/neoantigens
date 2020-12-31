@@ -84,17 +84,16 @@ get_frequency <- function(allele) {
 	    sprintf(sub("HLA-", "", allele)) %>%
 	    read_html()
 
-    nodes <- html_nodes(hlahtml, "table")
-
-    if (grepl("Sorry, we did not find any results", nodes[[4]]))
-	return(NA)
-
-    nodes[[5]] %>%
+    hlatbl <- html_node(hlahtml, "table.tblNormal")
+    
+    if (class(hlatbl) == "xml_missing") return(tibble(allele = allele, f = NA))
+    
+    hlatbl %>%
 	    html_table(fill = TRUE, header = TRUE) %>%
 	    select(2, 4, 6, 8) %>%
 	    as_tibble() %>%
-	    setNames(c("allele_db", "population", "f", "sample_size")) %>%
-	    mutate(sample_size = as.integer(sub(",", "", sample_size)))
+	    setNames(c("allele", "population", "f", "n")) %>%
+	    mutate(n = as.integer(sub(",", "", n)))
 }
 ```
 
@@ -104,26 +103,37 @@ Ela tem o seguinte output quando aplicada a um alelo:
 get_frequency("A*01:01")
 ```
 
-Vamos aplicar a todos os alelos dos pacientes. Como são várias amostragens na China, vou tirar uma média ponderada da frequência alélica dados os tamanhos amostrais.
+Vamos aplicar a todos os alelos dos pacientes. Como são várias amostragens na China, vou tirar uma média ponderada da frequência alélica dados os tamanhos amostrais, para cada alelo.
 
 Aplicar a todos os alelos pode levar alguns minutos, então vou paralelizar com `furrr`.
 
-```{r}
+```{r, echo = FALSE}
+allele_freqs <- readRDS("./allele_freqs.rds")
+```
+
+```{r, eval=FALSE}
 library(furrr)
 
 plan(multisession, workers = 8)
 
-allele_freqs <- hlatypes %>% 
-    drop_na() %>%
+unique_df <- hlatypes %>% 
+    drop_na(allele) %>%
     distinct(locus, allele) %>%
-    mutate(data = future_map(allele, get_frequency)) %>%
-    unnest(data) %>%
+    arrange(locus, allele)
+
+allele_freqs <- future_map_dfr(unique_df$allele, get_frequency) %>%
+    left_join(unique_df, .) %>%
     group_by(locus, allele) %>%
-    summarise(wf = weighted.mean(f, sample_size)) %>%
+    summarise(wf = weighted.mean(f, n)) %>%
     ungroup()
 
+#saveRDS(allele_freqs, "allele_freqs.rds")
+```
+
+```{r}
 allele_freqs
 ```
+
 
 Verificamos quais alelos não estão no banco do allelefrequencies.net:
 
@@ -143,16 +153,15 @@ get_rare <- function(allele) {
     hlaurl <- "http://www.allelefrequencies.net/hla6002a.asp?all_name=%s"
 
     hlahtml <- hlaurl %>%
-	sprintf(sub("HLA-", "", allele)) %>%
-	read_html()
+        sprintf(sub("HLA-", "", allele)) %>%
+        read_html()
 
-    nodes <- html_nodes(hlahtml, "table")
-
-    nodes[[4]] %>%
-	html_table(fill = TRUE, header = TRUE) %>%
-	select(2, 4, 6) %>%
-	as_tibble() %>%
-	setNames(c("population", "f", "sample_size"))
+    html_node(hlahtml, "table.tblNormal") %>%
+        html_table(fill = TRUE, header = TRUE) %>%
+        select(2, 4, 6) %>%
+        as_tibble() %>%
+        setNames(c("population", "f", "n")) %>%
+        filter(f > 0)
 }
 ```
 
@@ -160,7 +169,6 @@ Aplico essa função aos alelos:
 
 ```{r}
 get_rare("A*02:133") %>%
-    filter(f > 0) %>%
     knitr::kable(format.args = list(scientific = FALSE))
 ```
 
@@ -168,18 +176,22 @@ Vemos que o `A*02:133` não foi descrito na China (nesse banco de dados), apenas
 
 No entanto, para os outros alelos, podemos plotar a frequência:
 
-```{r, fig.width=8, fig.height=6}
+```{r, fig.width=8.5, fig.height=6.5}
+library(ggthemes)
+
 allele_freqs %>%
     mutate(allele = fct_reorder(allele, -wf)) %>%
     ggplot(aes(x = wf, y = allele, fill = wf)) +
-    geom_col() +
+    geom_col(color = "grey50", size = .25) +
     scale_y_discrete(limits = rev) +
     facet_wrap(~locus, scales = "free", nrow = 1) +
-    scale_fill_continuous(type = "viridis",
-                          guide = guide_colourbar(direction = "horizontal",
-                                                  barwidth = 10,
-                                                   barheight = .5)) +
+    scale_fill_continuous_tableau(guide = guide_colourbar(direction = "horizontal",
+                                                          barwidth = 10,
+                                                          barheight = .5)) +
     labs(x = "Allele frequency in China", y = NULL, fill = NULL) +
     theme_bw() +
-    theme(legend.position = "bottom")
+    theme(legend.position = "bottom",
+          panel.grid.major.y = element_blank(),
+          panel.grid.minor.y = element_blank(),
+          panel.grid.minor.x = element_blank())
 ```
