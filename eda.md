@@ -83,13 +83,13 @@ frequência na população chinesa.
 Para isso criei a função abaixo:
 
 ``` r
-get_frequency <- function(allele) {
+get_frequency <- function(allele, country = "") {
     
     hlaurl <- 
-        "http://www.allelefrequencies.net/hla6006a.asp?hla_selection=%s&hla_country=China"
+        "http://www.allelefrequencies.net/hla6006a.asp?hla_selection=%s&hla_country=%s"
 
     hlahtml <- hlaurl %>%
-        sprintf(sub("HLA-", "", allele)) %>%
+        sprintf(sub("HLA-", "", allele), country) %>%
         read_html()
 
     hlatbl <- html_node(hlahtml, "table.tblNormal")
@@ -108,35 +108,21 @@ get_frequency <- function(allele) {
 Ela tem o seguinte output quando aplicada a um alelo:
 
 ``` r
-get_frequency("A*01:01")
+get_frequency("A*01:01", "Brazil")
 ```
 
-    # A tibble: 19 x 4
-       allele  population                                   f     n
-       <chr>   <chr>                                    <dbl> <int>
-     1 A*01:01 China Beijing                           0.037     67
-     2 A*01:01 China Beijing Shijiazhuang Tianjian Han 0.034    618
-     3 A*01:01 China Canton Han                        0.006    264
-     4 A*01:01 China Guangzhou                         0.01     102
-     5 A*01:01 China Guizhou Province Bouyei           0.005    109
-     6 A*01:01 China Guizhou Province Miao pop 2       0         85
-     7 A*01:01 China Guizhou Province Shui             0        153
-     8 A*01:01 China Hubei Han                         0.0229  3732
-     9 A*01:01 China Inner Mongolia Region             0.054    102
-    10 A*01:01 China Jiangsu Han                       0.037   3238
-    11 A*01:01 China Jiangsu Province Han              0.0174   334
-    12 A*01:01 China North Han                         0        105
-    13 A*01:01 China Qinghai Province Hui              0.055    110
-    14 A*01:01 China Shanxi HIV negative               0.091     22
-    15 A*01:01 China Sichuan HIV negative              0.059     34
-    16 A*01:01 China South Han                         0.005    284
-    17 A*01:01 China Uyghur HIV negative               0.026     19
-    18 A*01:01 China Yunnan Province Han               0.015    101
-    19 A*01:01 Germany DKMS - China minority           0.038   1282
+    # A tibble: 4 x 4
+      allele  population                           f     n
+      <chr>   <chr>                            <dbl> <int>
+    1 A*01:01 Brazil  Puyanawa                 0.043   150
+    2 A*01:01 Brazil Belo Horizonte Caucasian  0.079    95
+    3 A*01:01 Brazil Mixed                     0.091   108
+    4 A*01:01 Brazil Vale do Ribeira Quilombos 0       144
 
-Vamos aplicar a todos os alelos dos pacientes. Como são várias
-amostragens na China, vou tirar uma média ponderada da frequência
-alélica dados os tamanhos amostrais, para cada alelo.
+Vamos aplicar a todos os alelos dos pacientes, para obter suas
+frequências na China. Como são várias amostragens no país, vou tirar
+uma média ponderada da frequência alélica dados os tamanhos amostrais,
+para cada alelo.
 
 Aplicar a todos os alelos pode levar alguns minutos, então vou
 paralelizar com `furrr`.
@@ -151,7 +137,8 @@ unique_df <- hlatypes %>%
     distinct(locus, allele) %>%
     arrange(locus, allele)
 
-allele_freqs <- future_map_dfr(unique_df$allele, get_frequency) %>%
+allele_freqs <- unique_df$allele %>%
+    future_map_dfr(get_frequency, country = "China") %>%
     left_join(unique_df, .) %>%
     group_by(locus, allele) %>%
     summarise(wf = weighted.mean(f, n)) %>%
@@ -189,38 +176,20 @@ allele_freqs %>%
 
     [1] "A*02:133"
 
-Para esse alelo, ainda podemos buscar no banco de alelos raros.
-
-Para isso, vou precisar criar uma função similar à anterior:
-
-``` r
-get_rare <- function(allele) {
-
-    hlaurl <- "http://www.allelefrequencies.net/hla6002a.asp?all_name=%s"
-
-    hlahtml <- hlaurl %>%
-        sprintf(sub("HLA-", "", allele)) %>%
-        read_html()
-
-    html_node(hlahtml, "table.tblNormal") %>%
-        html_table(fill = TRUE, header = TRUE) %>%
-        select(2, 4, 6) %>%
-        as_tibble() %>%
-        setNames(c("population", "f", "n")) %>%
-        filter(f > 0)
-}
-```
-
-Aplico essa função aos alelos:
+Podemos verificar se alelo ocorre em alguma outra população (não
+especificar nenhum valor pro argumento `country`):
 
 ``` r
-get_rare("A*02:133") %>%
-    knitr::kable(format.args = list(scientific = FALSE))
+get_frequency("A*02:133") %>%
+    filter(f > 0) %>%
+    mutate(f = format(f, scientific = FALSE))
 ```
 
-| population                      |      f |    n |
-| :------------------------------ | -----: | ---: |
-| Germany DKMS - Austria minority | 0.0003 | 1698 |
+    # A tibble: 2 x 4
+      allele   population                      f           n
+      <chr>    <chr>                           <chr>   <int>
+    1 A*02:133 Germany DKMS - Austria minority 0.00030  1698
+    2 A*02:133 Germany pop 8                   0.00001 39689
 
 Vemos que o `A*02:133` não foi descrito na China (nesse banco de dados),
 apenas possui uma frequência muita baixa numa outra população.
@@ -247,4 +216,4 @@ allele_freqs %>%
           panel.grid.minor.x = element_blank())
 ```
 
-![](eda_files/figure-gfm/unnamed-chunk-12-1.png)<!-- -->
+![](eda_files/figure-gfm/unnamed-chunk-11-1.png)<!-- -->
